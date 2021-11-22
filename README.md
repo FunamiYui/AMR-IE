@@ -13,6 +13,15 @@ The core python dependencies for this code are as follows:
 
 For other dependencies, you can simply use `pip install` to install the required packages that are indicated by the error messages.
 
+And for IBM/transition-amr-parser's dependencies, refer to this [link](https://github.com/IBM/transition-amr-parser/tree/stack-transformer), DO NOT `pip install` directly.
+
+关于使用IBM的pretrained-parser（stack-transformer）有一些需要记录的点：
+- 目前已经可以使用，并跑通了对oneie数据的parse。
+- 原repo是没有也不会放出来pretrained-model的，因为issue里面他们说训练用的AMR LDC数据集是非公开的，所以不放。
+- 但是AMR-IE repo放出来了pretrained-parser，包括所使用的code和pretrained-model(checkpoint)，pretrained-model是在AMR-IE作者在AMR3.0上训练好的（We used IBM’s code and retrained the AMR parser using AMR 3.0 data (LDC2019E81).）。使用的时候要follow原repo给出的installation instructions才能装好，跑的时候要load checkpoint。
+- 想要3090跑起来这个parser，依赖怎么安：首先按照AMR-IE的README安装，torch因为要3090，所以去用兼容cuda11以上的版本，他要求1.6不兼容3090，我用1.10也没报错，不过版本不同终究可能会导致复现结果的不同吧。其余三个包用pip安就行，然后安一下lxml和nltk。最重要的是parser相关依赖的安装，不能直接去pip或者conda fairseq，而是要follow原repo给出的installation instructions从本地对fairseq进行patch后再安装，具体follow原repo也就够了。
+- 关于生成的数据：我用两台机器都对他们给出的genia2011的oneiejson文件进行parse，跑出来的结果是同样的，这证明用pretrained parser进行amr parse没有随机性，但是这两个结果都与他们放出来的预处理好的文件不一，我想有可能是因为依赖版本不同？这个应该影响不大。
+
 ## Datasets
 ### ACE-2005 and ERE
 The ACE-2005 and ERE datasets are only available at the [LDC website](https://catalog.ldc.upenn.edu/LDC2006T06). Please use the following steps for preprocessing and AMR parsing.
