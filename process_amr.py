@@ -31,7 +31,7 @@ def get_amr_edge_idx(edge_type_str):
         return 11
 
 def amr_parse(tokens_list, output_dir):
-    parser = AMRParser.from_checkpoint('/home/zixuan11/bioamr/checkpoint_best.pt')
+    parser = AMRParser.from_checkpoint('../amr_general/checkpoint_best.pt')  # TODO(zhenzhang): 这个路径要改
     amr_list = parser.parse_sentences(tokens_list)
     torch.save(amr_list, output_dir)
 
@@ -165,6 +165,9 @@ def processing_amr(amr_dir, tokens_list):
     for i in range(len(node_idx_list)):
         graph_i = dgl.DGLGraph()
 
+        # edge2type: key - edge(出， 入｜顶点编号从0开始)；value - edge type(簇编号)
+        # node2offset: key - 顶点(编号从0开始)；value - 原句align span的右闭端点(下面称其为token positions)
+        # node2offset_whole: key - 顶点(编号从0开始)；value - 原句align span（左闭右开）（这个align span是AMR parser提供的，下面称其为token span）
         edge2type = edge_type_list[i]
         node2offset = node_idx_offset_list[i]
         node2offset_whole = node_idx_offset_whole[i]
@@ -185,7 +188,7 @@ def processing_amr(amr_dir, tokens_list):
         node_prior_tensor = torch.zeros(nodes_num, 1, dtype=torch.long)
         for j in range(nodes_num):
             node_prior_tensor[j][0] = order_list[i].index(j)
-        graph_i.ndata['priority'] = node_prior_tensor
+        graph_i.ndata['priority'] = node_prior_tensor   # index为i的value表示i在拓扑排序中的index
         # add edges
         edge_num = len(edge2type)
     
@@ -193,8 +196,9 @@ def processing_amr(amr_dir, tokens_list):
         
         ''' bi-directional edges '''
         edge_type_tensor = torch.zeros(2 * edge_num, 1, dtype=torch.long)
+        # 两个for循环仅边的方向不同，于是完成双向边的添加
         for key in edge2type:
-            graph_i.add_edges(key[0], key[1])
+            graph_i.add_edges(key[0], key[1])       # edge的顶点都是(编号从0开始)
             edge_type_tensor[edge_iter][0] = edge2type[key]
             edge_iter += 1
 
@@ -203,27 +207,30 @@ def processing_amr(amr_dir, tokens_list):
             edge_type_tensor[edge_iter][0] = edge2type[key]
             edge_iter += 1
         
-        graph_i.edata['type'] = edge_type_tensor
-        graphs_list.append(graph_i)
+        graph_i.edata['type'] = edge_type_tensor    # edge type 信息放到graph的edata里面
+        graphs_list.append(graph_i)                 # 到这里，graph_i(图的拓扑信息)构建完成
 
-        align_dict = {}
-        exist_dict = {}
+        # Paper中的3.3 Node Alignment
+        align_dict = {}     # 表明原句中每个token在AMR graph中的matched node或nearest node是哪个（node编号从0开始）
+        exist_dict = {}     # 表明原句中每个token是否在AMR graph中有matched node
 
-        span_list = graph_i.ndata["token_span"].tolist()
+        span_list = graph_i.ndata["token_span"].tolist()    # 以list的形式承载每个AMR node对应原句的align span
 
-        for p in range(len(tokens_list[i])):
-            min_dis = 2 * len(tokens_list[i])
-            min_dis_idx = -1
+        for p in range(len(tokens_list[i])):    # tokens_list[i]是该句话被PLMTokenizer分词后的token组成的list
+            min_dis = 2 * len(tokens_list[i])   # 用来求nearest AMR node
+            min_dis_idx = -1                    # nearest AMR node index
 
+            # if_found == 1时就是指该token与AMR graph中某个node相match
+            # if_found == 0时即在AMR graph中没找到与该token match的node
             if_found = 0
 
-            for q in range(len(span_list)):
-                if p >= span_list[q][0] and p < span_list[q][1]:
+            for q in range(len(span_list)):     # 遍历AMR graph node
+                if p >= span_list[q][0] and p < span_list[q][1]:    # 找到token在AMR graph中的matched AMR node（公式和paper里给的似乎不一样）
                     if_found = 1
                     align_dict.update({p: q})
                     exist_dict.update({p: 1})
                     break
-                else:
+                else:       # 计算token在AMR graph中的nearest AMR node（不过计算公式和paper里给的似乎不一样）
                     new_dis_1 = abs(p - span_list[q][0])
                     new_dis_2 = abs(p - (span_list[q][1] - 1))
                     new_dis = min(new_dis_1, new_dis_2)
@@ -231,6 +238,10 @@ def processing_amr(amr_dir, tokens_list):
                         min_dis = new_dis
                         min_dis_idx = q
             
+            # 遍历AMR graph node后，仍有if_found == 0时，将token的align置为通过上面求得的该token的nearest AMR node
+            # 也即对原句里的每个token，它在align_dict里面都会有相应的值；
+            # 如果exist_dict对应的值为1，那么align_dict里面的值就是matched AMR node编号
+            # 如果exist_dict对应的值为0，那么align_dict里面的值就是nearest AMR node编号
             if not if_found:
                 align_dict.update({p: min_dis_idx})
                 exist_dict.update({p: 0})
@@ -238,6 +249,9 @@ def processing_amr(amr_dir, tokens_list):
         list_of_align_dict.append(align_dict)
         list_of_exist_dict.append(exist_dict)
 
+    # 依次返回图的拓扑信息；
+    # 原句中每个token在AMR graph中的matched node或nearest node编号信息；
+    # 原句中每个token是否在AMR graph中有matched node的信息
     return graphs_list, list_of_align_dict, list_of_exist_dict
 
 
@@ -263,6 +277,7 @@ if __name__ == "__main__":
 
     # Examples for precessing ace05 datasets
     # The model only need 'train.oneie.json' and 'train_graphs.pkl'. The 'train_amrs.pkl' is used to store the AMR graphs as strings.
+    # TODO(zhenzhang): 这个路径要改
     get_amr_data("./data/ace05/train.oneie.json", "./data/ace05/train_graphs.pkl", "./data/ace05/train_amrs.pkl")
     get_amr_data("./data/ace05/dev.oneie.json", "./data/ace05/dev_graphs.pkl", "./data/ace05/dev_amrs.pkl")
     get_amr_data("./data/ace05/test.oneie.json", "./data/ace05/test_graphs.pkl", "./data/ace05/test_amrs.pkl")
